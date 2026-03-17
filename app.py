@@ -5,15 +5,8 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain_groq import ChatGroq
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-import streamlit as st
-from langchain_community.document_loaders import PyPDFLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_community.vectorstores import FAISS
-from langchain_groq import ChatGroq
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import HumanMessage, AIMessage
-from langchain_core.runnables import RunnablePassthrough, RunnableLambda
+from langchain_core.runnables import RunnableLambda
 from langchain_core.output_parsers import StrOutputParser
 from langchain.chains import create_history_aware_retriever
 import os
@@ -49,7 +42,6 @@ def create_chain(pdf_path):
     # Load & split
     loader = PyPDFLoader(pdf_path)
     documents = loader.load()
-
     text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=1000,
         chunk_overlap=200
@@ -69,7 +61,7 @@ def create_chain(pdf_path):
         model_name="llama-3.1-8b-instant"
     )
 
-    # Contextualize question using chat history
+    # Prompt to rephrase question using history
     contextualize_prompt = ChatPromptTemplate.from_messages([
         ("system",
          "Given the chat history and the latest user question, "
@@ -92,25 +84,33 @@ def create_chain(pdf_path):
         ("human", "{input}")
     ])
 
-    # Format docs helper
-    def format_docs(inputs):
-        return "\n\n".join(doc.page_content for doc in inputs["context"])
+    # ✅ Build chain using RunnableLambda only — no assign()
+    def run_chain(inputs):
+        question = inputs["input"]
+        history = inputs.get("chat_history", [])
 
-    # Build RAG chain manually
-    rag_chain = (
-        RunnablePassthrough.assign(
-            context=lambda x: history_aware_retriever.invoke({
-                "input": x["input"],
-                "chat_history": x.get("chat_history", [])
-            })
+        # Step 1: retrieve docs
+        retrieved_docs = history_aware_retriever.invoke({
+            "input": question,
+            "chat_history": history
+        })
+
+        # Step 2: format docs into context string
+        context = "\n\n".join(doc.page_content for doc in retrieved_docs)
+
+        # Step 3: build prompt messages
+        messages = answer_prompt.format_messages(
+            context=context,
+            chat_history=history,
+            input=question
         )
-        | RunnablePassthrough.assign(
-            context=RunnableLambda(format_docs)
-        )
-        | answer_prompt
-        | llm
-        | StrOutputParser()
-    )
+
+        # Step 4: call LLM
+        response = llm.invoke(messages)
+
+        return response.content
+
+    rag_chain = RunnableLambda(run_chain)
 
     return rag_chain, history_aware_retriever
 
@@ -128,7 +128,6 @@ if uploaded_file:
             st.session_state.retriever = retriever
             st.session_state.chat_history = []
         st.success("✅ PDF processed! Ask your questions.")
-
 else:
     st.info("👈 Please upload a PDF from the sidebar to get started.")
 
@@ -138,7 +137,7 @@ if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
 
-# ✅ Display chat history
+# ✅ Display existing chat history
 for msg in st.session_state.chat_history:
     if isinstance(msg, HumanMessage):
         with st.chat_message("user"):
@@ -155,12 +154,11 @@ if user_input:
     if not st.session_state.get("chain"):
         st.warning("⚠️ Please upload a PDF first.")
     else:
-        # Show user message
         with st.chat_message("user"):
             st.markdown(user_input)
 
         with st.spinner("🤔 Thinking..."):
-            # Get source documents
+            # Get source docs for display
             source_docs = st.session_state.retriever.invoke({
                 "input": user_input,
                 "chat_history": st.session_state.chat_history
@@ -172,11 +170,11 @@ if user_input:
                 "chat_history": st.session_state.chat_history
             })
 
-        # Update chat history
+        # Update history
         st.session_state.chat_history.append(HumanMessage(content=user_input))
         st.session_state.chat_history.append(AIMessage(content=answer))
 
-        # Show assistant response
+        # Show response
         with st.chat_message("assistant"):
             st.markdown(answer)
             if source_docs:
