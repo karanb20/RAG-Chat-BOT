@@ -27,3 +27,5 @@ An advanced Retrieval-Augmented Generation (RAG) chatbot that allows users to up
 ---
 
 ## 📁 Project Structure
+live demo
+https://rag-chat-bot-izat4myai9aj66ctfkoagu.streamlit.app/
