@@ -11,9 +11,12 @@ from langchain.chains.combine_documents import create_stuff_documents_chain
 from dotenv import load_dotenv
 import os
 import tempfile
-
-load_dotenv()
-groq_key = os.getenv("groq_api_key")
+try:
+    groq_key = st.secrets["groq_api_key"]
+except:
+    from dotenv import load_dotenv
+    load_dotenv()
+    groq_key = os.getenv("groq_api_key")
 
 st.set_page_config(page_title="RAG Chatbot", layout="wide")
 st.title("Advanced RAG Chatbot")
